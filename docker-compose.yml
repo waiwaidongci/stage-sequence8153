@@ -1,0 +1,63 @@
+name: stage-sequence-gb0087
+x-python: &python
+  image: stage-sequence-gb0087:local
+  environment:
+    DATABASE_URL: postgresql+psycopg://analytics:analytics_local@db:5432/analytics
+    REDIS_URL: redis://redis:6379/0
+    JWT_SECRET: ${JWT_SECRET:?copy .env.example to .env}
+    SEED_DEMO: ${SEED_DEMO:-true}
+services:
+  backend:
+    <<: *python
+    build: ./backend
+    container_name: ${COMPOSE_PROJECT_NAME:-stage-sequence-gb0087}-backend
+    ports: ["127.0.0.1:${BACKEND_PORT:-19336}:8000"]
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  worker:
+    <<: *python
+    pull_policy: never
+    container_name: ${COMPOSE_PROJECT_NAME:-stage-sequence-gb0087}-worker
+    command: [python, -m, app.ops.worker]
+    depends_on:
+      backend: {condition: service_healthy}
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -m, app.ops.worker_probe]
+      interval: 2s
+      timeout: 3s
+      retries: 25
+  db:
+    container_name: ${COMPOSE_PROJECT_NAME:-stage-sequence-gb0087}-db
+    ports: ["127.0.0.1:${DB_PORT:-17836}:5432"]
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: analytics
+      POSTGRES_PASSWORD: analytics_local
+      POSTGRES_DB: analytics
+    volumes: [db_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD, pg_isready, -h, 127.0.0.1, -U, analytics, -d, analytics]
+      interval: 2s
+      timeout: 4s
+      retries: 45
+  redis:
+    image: redis:7-alpine
+    container_name: ${COMPOSE_PROJECT_NAME:-stage-sequence-gb0087}-redis
+    command: [redis-server, --appendonly, 'yes']
+    volumes: [redis_data:/data]
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+volumes:
+  db_data:
+  redis_data:
